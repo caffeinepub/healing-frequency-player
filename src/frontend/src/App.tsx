@@ -22,6 +22,8 @@ interface MoodData {
   description: string;
   emoji: string;
   hue: number; // used for per-card accent color
+  binauralBeat?: number; // Hz difference for binaural beat (left: hz, right: hz+binauralBeat)
+  gammaBurst?: boolean; // if true, layer subtle 40 Hz gamma bursts
 }
 
 const MOODS: MoodData[] = [
@@ -81,20 +83,41 @@ const MOODS: MoodData[] = [
     emoji: "☀️",
     hue: 80,
   },
+  {
+    mood: "Libido Booster",
+    hz: 417,
+    description: "Vitality and sensual awakening",
+    emoji: "🌹",
+    hue: 340,
+    binauralBeat: 6,
+    gammaBurst: true,
+  },
 ];
 
 /* ── Audio engine hook ───────────────────────────────────────────── */
 type AudioState = "stopped" | "playing" | "paused";
 
-function useAudioEngine(hz: number, volume: number) {
+function useAdvancedAudioEngine(
+  hz: number,
+  volume: number,
+  binauralBeat?: number,
+  gammaBurst?: boolean,
+) {
   const ctxRef = useRef<AudioContext | null>(null);
-  const oscRef = useRef<OscillatorNode | null>(null);
+  // Standard or binaural oscillators
+  const oscLeftRef = useRef<OscillatorNode | null>(null);
+  const oscRightRef = useRef<OscillatorNode | null>(null);
   const gainRef = useRef<GainNode | null>(null);
+  // Gamma burst oscillator & gain
+  const oscGammaRef = useRef<OscillatorNode | null>(null);
+  const gammaGainRef = useRef<GainNode | null>(null);
+  const gammaIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
   const startTimeRef = useRef<number | null>(null);
   const accumulatedRef = useRef<number>(0);
   const [state, setState] = useState<AudioState>("stopped");
 
-  // Keep gain in sync with volume slider while playing
+  // Keep main gain in sync with volume slider while playing
   useEffect(() => {
     if (gainRef.current) {
       gainRef.current.gain.setTargetAtTime(
@@ -105,6 +128,22 @@ function useAudioEngine(hz: number, volume: number) {
     }
   }, [volume]);
 
+  const stopOscillators = useCallback(() => {
+    // Clear gamma interval first
+    if (gammaIntervalRef.current !== null) {
+      clearInterval(gammaIntervalRef.current);
+      gammaIntervalRef.current = null;
+    }
+    oscLeftRef.current?.stop();
+    oscLeftRef.current = null;
+    oscRightRef.current?.stop();
+    oscRightRef.current = null;
+    oscGammaRef.current?.stop();
+    oscGammaRef.current = null;
+    gainRef.current = null;
+    gammaGainRef.current = null;
+  }, []);
+
   const play = useCallback(() => {
     if (state === "playing") return;
 
@@ -114,57 +153,110 @@ function useAudioEngine(hz: number, volume: number) {
     const ctx = ctxRef.current;
     if (ctx.state === "suspended") void ctx.resume();
 
-    const osc = ctx.createOscillator();
-    osc.type = "sine";
-    osc.frequency.value = hz;
-
+    // Main gain node
     const gain = ctx.createGain();
     gain.gain.value = volume / 100;
-
-    osc.connect(gain);
     gain.connect(ctx.destination);
-    osc.start();
-
-    oscRef.current = osc;
     gainRef.current = gain;
+
+    if (binauralBeat !== undefined) {
+      // Binaural: two oscillators panned left/right
+      const oscL = ctx.createOscillator();
+      oscL.type = "sine";
+      oscL.frequency.value = hz;
+
+      const oscR = ctx.createOscillator();
+      oscR.type = "sine";
+      oscR.frequency.value = hz + binauralBeat;
+
+      const panL = ctx.createStereoPanner();
+      panL.pan.value = -1;
+      const panR = ctx.createStereoPanner();
+      panR.pan.value = 1;
+
+      oscL.connect(panL);
+      panL.connect(gain);
+      oscR.connect(panR);
+      panR.connect(gain);
+
+      oscL.start();
+      oscR.start();
+
+      oscLeftRef.current = oscL;
+      oscRightRef.current = oscR;
+    } else {
+      // Standard: single oscillator, no panning
+      const osc = ctx.createOscillator();
+      osc.type = "sine";
+      osc.frequency.value = hz;
+      osc.connect(gain);
+      osc.start();
+      oscLeftRef.current = osc;
+    }
+
+    if (gammaBurst) {
+      // Gamma burst oscillator at 40 Hz with separate low-gain node
+      const gammaOsc = ctx.createOscillator();
+      gammaOsc.type = "sine";
+      gammaOsc.frequency.value = 40;
+
+      const gammaGain = ctx.createGain();
+      gammaGain.gain.value = 0;
+
+      gammaOsc.connect(gammaGain);
+      gammaGain.connect(ctx.destination);
+      gammaOsc.start();
+
+      oscGammaRef.current = gammaOsc;
+      gammaGainRef.current = gammaGain;
+
+      // Schedule repeating gamma pulses every 2000ms
+      const scheduleGammaPulse = () => {
+        const g = gammaGainRef.current;
+        const c = ctxRef.current;
+        if (!g || !c) return;
+        const now = c.currentTime;
+        g.gain.linearRampToValueAtTime(0.08, now + 0.05);
+        g.gain.linearRampToValueAtTime(0, now + 0.05 + 0.1);
+      };
+
+      scheduleGammaPulse();
+      gammaIntervalRef.current = setInterval(scheduleGammaPulse, 2000);
+    }
+
     startTimeRef.current = Date.now();
     setState("playing");
-  }, [state, hz, volume]);
+  }, [state, hz, volume, binauralBeat, gammaBurst]);
 
   const pause = useCallback(() => {
     if (state !== "playing") return;
-    // accumulate elapsed seconds before pausing
     if (startTimeRef.current !== null) {
       accumulatedRef.current += (Date.now() - startTimeRef.current) / 1000;
     }
-    oscRef.current?.stop();
-    oscRef.current = null;
-    gainRef.current = null;
+    stopOscillators();
     startTimeRef.current = null;
     setState("paused");
-  }, [state]);
+  }, [state, stopOscillators]);
 
   const stop = useCallback((): number => {
     let total = accumulatedRef.current;
     if (state === "playing" && startTimeRef.current !== null) {
       total += (Date.now() - startTimeRef.current) / 1000;
     }
-    oscRef.current?.stop();
-    oscRef.current = null;
-    gainRef.current = null;
+    stopOscillators();
     startTimeRef.current = null;
     accumulatedRef.current = 0;
     setState("stopped");
     return Math.floor(total);
-  }, [state]);
+  }, [state, stopOscillators]);
 
   // cleanup on unmount
   useEffect(() => {
     return () => {
-      oscRef.current?.stop();
+      stopOscillators();
       void ctxRef.current?.close();
     };
-  }, []);
+  }, [stopOscillators]);
 
   return { state, play, pause, stop };
 }
@@ -284,7 +376,7 @@ function MoodSelector({ onSelect }: MoodSelectorProps) {
         </div>
 
         {/* Mood grid */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 sm:gap-4 w-full max-w-3xl">
+        <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 sm:gap-4 w-full max-w-3xl">
           {MOODS.map((m, i) => (
             <button
               key={m.mood}
@@ -345,7 +437,12 @@ interface FrequencyPlayerProps {
 
 function FrequencyPlayer({ mood, onBack }: FrequencyPlayerProps) {
   const [volume, setVolume] = useState(50);
-  const { state, play, pause, stop } = useAudioEngine(mood.hz, volume);
+  const { state, play, pause, stop } = useAdvancedAudioEngine(
+    mood.hz,
+    volume,
+    mood.binauralBeat,
+    mood.gammaBurst,
+  );
   const { actor } = useActor();
   const { identity } = useInternetIdentity();
 
