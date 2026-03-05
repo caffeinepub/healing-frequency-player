@@ -1,0 +1,201 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@font-face {
+  font-family: "Fraunces";
+  src: url("/assets/fonts/Fraunces.woff2") format("woff2");
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Sora";
+  src: url("/assets/fonts/Sora.woff2") format("woff2");
+  font-weight: 100 800;
+  font-style: normal;
+  font-display: swap;
+}
+
+@layer base {
+  :root {
+    --radius: 1rem;
+
+    /* Deep midnight spa palette — dark mode only */
+    --background: 0.10 0.025 265;
+    --foreground: 0.93 0.02 240;
+    --card: 0.14 0.03 265;
+    --card-foreground: 0.93 0.02 240;
+    --popover: 0.14 0.03 265;
+    --popover-foreground: 0.93 0.02 240;
+    --primary: 0.72 0.19 195;
+    --primary-foreground: 0.10 0.025 265;
+    --secondary: 0.20 0.04 265;
+    --secondary-foreground: 0.93 0.02 240;
+    --muted: 0.18 0.03 265;
+    --muted-foreground: 0.60 0.04 255;
+    --accent: 0.65 0.22 290;
+    --accent-foreground: 0.10 0.025 265;
+    --destructive: 0.65 0.22 20;
+    --destructive-foreground: 0.97 0 0;
+    --border: 0.28 0.05 265;
+    --input: 0.22 0.04 265;
+    --ring: 0.72 0.19 195;
+
+    /* Chart colors */
+    --chart-1: 0.72 0.19 195;
+    --chart-2: 0.65 0.22 290;
+    --chart-3: 0.75 0.18 165;
+    --chart-4: 0.80 0.20 230;
+    --chart-5: 0.70 0.24 320;
+
+    /* Sidebar */
+    --sidebar: 0.12 0.03 265;
+    --sidebar-foreground: 0.93 0.02 240;
+    --sidebar-primary: 0.72 0.19 195;
+    --sidebar-primary-foreground: 0.10 0.025 265;
+    --sidebar-accent: 0.20 0.04 265;
+    --sidebar-accent-foreground: 0.93 0.02 240;
+    --sidebar-border: 0.28 0.05 265;
+    --sidebar-ring: 0.72 0.19 195;
+
+    /* Custom healing frequency tokens */
+    --glow-teal: 0.72 0.19 195;
+    --glow-violet: 0.65 0.22 290;
+    --glow-cyan: 0.80 0.20 205;
+    --surface-glass: 0.16 0.035 265;
+  }
+
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+    font-family: "Sora", sans-serif;
+  }
+}
+
+@layer utilities {
+  .font-display {
+    font-family: "Fraunces", serif;
+  }
+
+  .glass-card {
+    background: oklch(var(--surface-glass) / 0.7);
+    backdrop-filter: blur(12px);
+    border: 1px solid oklch(var(--border) / 0.6);
+  }
+
+  .glow-teal {
+    box-shadow:
+      0 0 20px oklch(var(--glow-teal) / 0.3),
+      0 0 60px oklch(var(--glow-teal) / 0.15),
+      inset 0 0 30px oklch(var(--glow-teal) / 0.05);
+  }
+
+  .glow-violet {
+    box-shadow:
+      0 0 20px oklch(var(--glow-violet) / 0.3),
+      0 0 60px oklch(var(--glow-violet) / 0.15);
+  }
+
+  .text-glow {
+    text-shadow:
+      0 0 20px oklch(var(--glow-teal) / 0.6),
+      0 0 40px oklch(var(--glow-teal) / 0.3);
+  }
+}
+
+@keyframes orb-pulse {
+  0%, 100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+  50% {
+    transform: scale(1.08);
+    opacity: 0.85;
+  }
+}
+
+@keyframes orb-ring-expand {
+  0% {
+    transform: scale(1);
+    opacity: 0.6;
+  }
+  100% {
+    transform: scale(1.5);
+    opacity: 0;
+  }
+}
+
+@keyframes frequency-shimmer {
+  0%, 100% {
+    opacity: 0.7;
+    transform: scaleX(1);
+  }
+  50% {
+    opacity: 1;
+    transform: scaleX(1.02);
+  }
+}
+
+@keyframes fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(24px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes float {
+  0%, 100% { transform: translateY(0px); }
+  50% { transform: translateY(-8px); }
+}
+
+.animate-orb-pulse {
+  animation: orb-pulse 2.4s ease-in-out infinite;
+}
+
+.animate-orb-ring {
+  animation: orb-ring-expand 2.4s ease-out infinite;
+}
+
+.animate-float {
+  animation: float 6s ease-in-out infinite;
+}
+
+.animate-fade-up {
+  animation: fade-up 0.5s ease-out forwards;
+}
+
+.animate-shimmer {
+  animation: frequency-shimmer 2.4s ease-in-out infinite;
+}
+
+/* Staggered fade-up for mood cards */
+.mood-card-1 { animation-delay: 0ms; }
+.mood-card-2 { animation-delay: 60ms; }
+.mood-card-3 { animation-delay: 120ms; }
+.mood-card-4 { animation-delay: 180ms; }
+.mood-card-5 { animation-delay: 240ms; }
+.mood-card-6 { animation-delay: 300ms; }
+.mood-card-7 { animation-delay: 360ms; }
+.mood-card-8 { animation-delay: 420ms; }
+
+/* Noise texture overlay */
+.noise-overlay::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  opacity: 0.025;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)' opacity='1'/%3E%3C/svg%3E");
+  background-repeat: repeat;
+  background-size: 128px 128px;
+}
