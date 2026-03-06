@@ -92,6 +92,21 @@ const MOODS: MoodData[] = [
     binauralBeat: 6,
     gammaBurst: true,
   },
+  {
+    mood: "Brain Theta Waves",
+    hz: 432,
+    description: "Deep relaxation, meditation & creativity",
+    emoji: "🧠",
+    hue: 260,
+    binauralBeat: 6,
+  },
+  {
+    mood: "OM 136.1 Hz",
+    hz: 136.1,
+    description: "Cosmic grounding, Earth's resonance",
+    emoji: "🕉️",
+    hue: 45,
+  },
 ];
 
 /* ── Audio engine hook ───────────────────────────────────────────── */
