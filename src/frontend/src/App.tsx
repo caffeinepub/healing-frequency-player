@@ -24,6 +24,7 @@ interface MoodData {
   hue: number; // used for per-card accent color
   binauralBeat?: number; // Hz difference for binaural beat (left: hz, right: hz+binauralBeat)
   gammaBurst?: boolean; // if true, layer subtle 40 Hz gamma bursts
+  sequenceFreqs?: { label: string; hz: number; carrierHz: number }[]; // sequential frequency steps (hz = conceptual, carrierHz = audible)
 }
 
 const MOODS: MoodData[] = [
@@ -101,11 +102,17 @@ const MOODS: MoodData[] = [
     binauralBeat: 6,
   },
   {
-    mood: "OM 136.1 Hz",
-    hz: 136.1,
-    description: "Cosmic grounding, Earth's resonance",
+    mood: "OHKS",
+    hz: 7.83,
+    description: "Sacred bija mantras · Schumann to divine",
     emoji: "🕉️",
-    hue: 45,
+    hue: 55,
+    sequenceFreqs: [
+      { label: "Om (ॐ)", hz: 7.83, carrierHz: 136.1 }, // Earth resonance / OM tone
+      { label: "Hreem (ह्रीं)", hz: 26, carrierHz: 285 }, // Cellular healing
+      { label: "Kleem (क्लीं)", hz: 33, carrierHz: 396 }, // Liberation & attraction
+      { label: "Shreem (श्रीं)", hz: 45, carrierHz: 528 }, // Abundance & miracles
+    ],
   },
 ];
 
@@ -274,6 +281,158 @@ function useAdvancedAudioEngine(
   }, [stopOscillators]);
 
   return { state, play, pause, stop };
+}
+
+/* ── Sequence audio engine hook ──────────────────────────────────── */
+function useSequenceAudioEngine(
+  steps: { label: string; hz: number; carrierHz?: number }[],
+  volume: number,
+) {
+  const ctxRef = useRef<AudioContext | null>(null);
+  const oscRef = useRef<OscillatorNode | null>(null);
+  const gainRef = useRef<GainNode | null>(null);
+
+  const startTimeRef = useRef<number | null>(null);
+  const accumulatedRef = useRef<number>(0);
+  const stepIndexRef = useRef<number>(0);
+  const stepTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const [state, setState] = useState<AudioState>("stopped");
+  const [activeStep, setActiveStep] = useState<{
+    label: string;
+    hz: number;
+  } | null>(null);
+
+  // Keep main gain in sync with volume slider while playing
+  useEffect(() => {
+    if (gainRef.current) {
+      gainRef.current.gain.setTargetAtTime(
+        volume / 100,
+        gainRef.current.context.currentTime,
+        0.05,
+      );
+    }
+  }, [volume]);
+
+  const clearStepTimer = useCallback(() => {
+    if (stepTimerRef.current !== null) {
+      clearInterval(stepTimerRef.current);
+      stepTimerRef.current = null;
+    }
+  }, []);
+
+  const stopOscillator = useCallback(() => {
+    clearStepTimer();
+    oscRef.current?.stop();
+    oscRef.current = null;
+    gainRef.current = null;
+  }, [clearStepTimer]);
+
+  const advanceStep = useCallback(() => {
+    if (!ctxRef.current || !oscRef.current) return;
+    stepIndexRef.current = (stepIndexRef.current + 1) % steps.length;
+    const nextStep = steps[stepIndexRef.current];
+    // Use carrierHz (audible) if provided, otherwise fall back to hz
+    oscRef.current.frequency.setTargetAtTime(
+      nextStep.carrierHz ?? nextStep.hz,
+      ctxRef.current.currentTime,
+      0.1,
+    );
+    setActiveStep(nextStep);
+  }, [steps]);
+
+  const play = useCallback(() => {
+    if (state === "playing") return;
+
+    if (!ctxRef.current) {
+      ctxRef.current = new AudioContext();
+    }
+    const ctx = ctxRef.current;
+    if (ctx.state === "suspended") void ctx.resume();
+
+    const gain = ctx.createGain();
+    gain.gain.value = volume / 100;
+    gain.connect(ctx.destination);
+    gainRef.current = gain;
+
+    const osc = ctx.createOscillator();
+    osc.type = "sine";
+
+    // Start from beginning or current step depending on resume
+    const currentStep = steps[stepIndexRef.current];
+    // Use carrierHz (audible) if provided, otherwise fall back to hz
+    osc.frequency.value = currentStep.carrierHz ?? currentStep.hz;
+    osc.connect(gain);
+    osc.start();
+    oscRef.current = osc;
+
+    setActiveStep(currentStep);
+
+    // Advance every 8 seconds
+    stepTimerRef.current = setInterval(() => {
+      advanceStep();
+    }, 8000);
+
+    startTimeRef.current = Date.now();
+    setState("playing");
+  }, [state, steps, volume, advanceStep]);
+
+  const pause = useCallback(() => {
+    if (state !== "playing") return;
+    if (startTimeRef.current !== null) {
+      accumulatedRef.current += (Date.now() - startTimeRef.current) / 1000;
+    }
+    stopOscillator();
+    startTimeRef.current = null;
+    setState("paused");
+    setActiveStep(null);
+  }, [state, stopOscillator]);
+
+  const stop = useCallback((): number => {
+    let total = accumulatedRef.current;
+    if (state === "playing" && startTimeRef.current !== null) {
+      total += (Date.now() - startTimeRef.current) / 1000;
+    }
+    stopOscillator();
+    startTimeRef.current = null;
+    accumulatedRef.current = 0;
+    stepIndexRef.current = 0;
+    setState("stopped");
+    setActiveStep(null);
+    return Math.floor(total);
+  }, [state, stopOscillator]);
+
+  // cleanup on unmount
+  useEffect(() => {
+    return () => {
+      stopOscillator();
+      void ctxRef.current?.close();
+    };
+  }, [stopOscillator]);
+
+  return { state, play, pause, stop, activeStep };
+}
+
+/* ── Unified audio engine wrapper ────────────────────────────────── */
+function useAudioEngine(mood: MoodData, volume: number) {
+  // Always call both hooks (React rules — no conditional hooks)
+  const standard = useAdvancedAudioEngine(
+    mood.hz,
+    volume,
+    mood.binauralBeat,
+    mood.gammaBurst,
+  );
+  const sequence = useSequenceAudioEngine(mood.sequenceFreqs ?? [], volume);
+
+  const isSequence = mood.sequenceFreqs !== undefined;
+
+  return {
+    state: isSequence ? sequence.state : standard.state,
+    play: isSequence ? sequence.play : standard.play,
+    pause: isSequence ? sequence.pause : standard.pause,
+    stop: isSequence ? sequence.stop : standard.stop,
+    activeStep: isSequence ? sequence.activeStep : null,
+  };
 }
 
 /* ── Background mesh ─────────────────────────────────────────────── */
@@ -452,12 +611,7 @@ interface FrequencyPlayerProps {
 
 function FrequencyPlayer({ mood, onBack }: FrequencyPlayerProps) {
   const [volume, setVolume] = useState(50);
-  const { state, play, pause, stop } = useAdvancedAudioEngine(
-    mood.hz,
-    volume,
-    mood.binauralBeat,
-    mood.gammaBurst,
-  );
+  const { state, play, pause, stop, activeStep } = useAudioEngine(mood, volume);
   const { actor } = useActor();
   const { identity } = useInternetIdentity();
 
@@ -572,6 +726,22 @@ function FrequencyPlayer({ mood, onBack }: FrequencyPlayerProps) {
             />
           </div>
         </div>
+
+        {/* Active mantra label for sequence mode */}
+        {isPlaying && activeStep && (
+          <div
+            className="flex items-center gap-2 px-4 py-2 rounded-full text-sm font-semibold tracking-wide animate-fade-up opacity-0"
+            style={{
+              color: orbColor,
+              background: `oklch(0.72 0.22 ${mood.hue} / 0.12)`,
+              border: `1px solid oklch(0.72 0.22 ${mood.hue} / 0.3)`,
+              animationDelay: "0ms",
+              animationFillMode: "forwards",
+            }}
+          >
+            <span>{activeStep.label}</span>
+          </div>
+        )}
 
         {/* Controls */}
         <div className="flex items-center gap-4">
