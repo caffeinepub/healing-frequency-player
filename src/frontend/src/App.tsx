@@ -16,15 +16,29 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 
 /* ── Mood data ───────────────────────────────────────────────────── */
+interface BreathingPhase {
+  label: string;
+  type: "inhale" | "hold" | "exhale";
+  duration: number;
+  carrierOffset: number;
+}
+
+interface BreathingBinaural {
+  baseCarrier: number;
+  binauralHz: number;
+  phases: BreathingPhase[];
+}
+
 interface MoodData {
   mood: string;
   hz: number;
   description: string;
   emoji: string;
-  hue: number; // used for per-card accent color
-  binauralBeat?: number; // Hz difference for binaural beat (left: hz, right: hz+binauralBeat)
-  gammaBurst?: boolean; // if true, layer subtle 40 Hz gamma bursts
-  sequenceFreqs?: { label: string; hz: number; carrierHz: number }[]; // sequential frequency steps (hz = conceptual, carrierHz = audible)
+  hue: number;
+  binauralBeat?: number;
+  gammaBurst?: boolean;
+  sequenceFreqs?: { label: string; hz: number; carrierHz: number }[];
+  breathingBinaural?: BreathingBinaural;
 }
 
 const MOODS: MoodData[] = [
@@ -108,13 +122,44 @@ const MOODS: MoodData[] = [
     emoji: "🕉️",
     hue: 55,
     sequenceFreqs: [
-      { label: "Om (ॐ)", hz: 7.83, carrierHz: 136.1 }, // Earth resonance / OM tone
-      { label: "Hreem (ह्रीं)", hz: 26, carrierHz: 285 }, // Cellular healing
-      { label: "Kleem (क्लीं)", hz: 33, carrierHz: 396 }, // Liberation & attraction
-      { label: "Shreem (श्रीं)", hz: 45, carrierHz: 528 }, // Abundance & miracles
+      { label: "Om (ॐ)", hz: 7.83, carrierHz: 136.1 },
+      { label: "Hreem (ह्रीं)", hz: 26, carrierHz: 285 },
+      { label: "Kleem (क्लीं)", hz: 33, carrierHz: 396 },
+      { label: "Shreem (श्रीं)", hz: 45, carrierHz: 528 },
     ],
   },
+  {
+    mood: "4-4-4-4",
+    hz: 100,
+    description: "40 Hz gamma · box breathing · calm focus",
+    emoji: "🌬️",
+    hue: 195,
+    breathingBinaural: {
+      baseCarrier: 100,
+      binauralHz: 40,
+      phases: [
+        { label: "Inhale", type: "inhale", duration: 4, carrierOffset: 0 },
+        { label: "Hold", type: "hold", duration: 4, carrierOffset: 0.5 },
+        { label: "Exhale", type: "exhale", duration: 4, carrierOffset: 1 },
+        { label: "Hold", type: "hold", duration: 4, carrierOffset: 0.5 },
+      ],
+    },
+  },
 ];
+
+/* ── Shared chime helper ─────────────────────────────────────────── */
+function playChime(ctx: AudioContext, volume: number) {
+  const osc = ctx.createOscillator();
+  const gain = ctx.createGain();
+  osc.type = "sine";
+  osc.frequency.value = 880;
+  gain.gain.value = volume * 0.08;
+  gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.2);
+  osc.connect(gain);
+  gain.connect(ctx.destination);
+  osc.start(ctx.currentTime);
+  osc.stop(ctx.currentTime + 0.25);
+}
 
 /* ── Audio engine hook ───────────────────────────────────────────── */
 type AudioState = "stopped" | "playing" | "paused";
@@ -126,11 +171,9 @@ function useAdvancedAudioEngine(
   gammaBurst?: boolean,
 ) {
   const ctxRef = useRef<AudioContext | null>(null);
-  // Standard or binaural oscillators
   const oscLeftRef = useRef<OscillatorNode | null>(null);
   const oscRightRef = useRef<OscillatorNode | null>(null);
   const gainRef = useRef<GainNode | null>(null);
-  // Gamma burst oscillator & gain
   const oscGammaRef = useRef<OscillatorNode | null>(null);
   const gammaGainRef = useRef<GainNode | null>(null);
   const gammaIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -139,7 +182,6 @@ function useAdvancedAudioEngine(
   const accumulatedRef = useRef<number>(0);
   const [state, setState] = useState<AudioState>("stopped");
 
-  // Keep main gain in sync with volume slider while playing
   useEffect(() => {
     if (gainRef.current) {
       gainRef.current.gain.setTargetAtTime(
@@ -151,7 +193,6 @@ function useAdvancedAudioEngine(
   }, [volume]);
 
   const stopOscillators = useCallback(() => {
-    // Clear gamma interval first
     if (gammaIntervalRef.current !== null) {
       clearInterval(gammaIntervalRef.current);
       gammaIntervalRef.current = null;
@@ -168,46 +209,35 @@ function useAdvancedAudioEngine(
 
   const play = useCallback(() => {
     if (state === "playing") return;
-
-    if (!ctxRef.current) {
-      ctxRef.current = new AudioContext();
-    }
+    if (!ctxRef.current) ctxRef.current = new AudioContext();
     const ctx = ctxRef.current;
     if (ctx.state === "suspended") void ctx.resume();
 
-    // Main gain node
     const gain = ctx.createGain();
     gain.gain.value = volume / 100;
     gain.connect(ctx.destination);
     gainRef.current = gain;
 
     if (binauralBeat !== undefined) {
-      // Binaural: two oscillators panned left/right
       const oscL = ctx.createOscillator();
       oscL.type = "sine";
       oscL.frequency.value = hz;
-
       const oscR = ctx.createOscillator();
       oscR.type = "sine";
       oscR.frequency.value = hz + binauralBeat;
-
       const panL = ctx.createStereoPanner();
       panL.pan.value = -1;
       const panR = ctx.createStereoPanner();
       panR.pan.value = 1;
-
       oscL.connect(panL);
       panL.connect(gain);
       oscR.connect(panR);
       panR.connect(gain);
-
       oscL.start();
       oscR.start();
-
       oscLeftRef.current = oscL;
       oscRightRef.current = oscR;
     } else {
-      // Standard: single oscillator, no panning
       const osc = ctx.createOscillator();
       osc.type = "sine";
       osc.frequency.value = hz;
@@ -217,22 +247,16 @@ function useAdvancedAudioEngine(
     }
 
     if (gammaBurst) {
-      // Gamma burst oscillator at 40 Hz with separate low-gain node
       const gammaOsc = ctx.createOscillator();
       gammaOsc.type = "sine";
       gammaOsc.frequency.value = 40;
-
       const gammaGain = ctx.createGain();
       gammaGain.gain.value = 0;
-
       gammaOsc.connect(gammaGain);
       gammaGain.connect(ctx.destination);
       gammaOsc.start();
-
       oscGammaRef.current = gammaOsc;
       gammaGainRef.current = gammaGain;
-
-      // Schedule repeating gamma pulses every 2000ms
       const scheduleGammaPulse = () => {
         const g = gammaGainRef.current;
         const c = ctxRef.current;
@@ -241,7 +265,6 @@ function useAdvancedAudioEngine(
         g.gain.linearRampToValueAtTime(0.08, now + 0.05);
         g.gain.linearRampToValueAtTime(0, now + 0.05 + 0.1);
       };
-
       scheduleGammaPulse();
       gammaIntervalRef.current = setInterval(scheduleGammaPulse, 2000);
     }
@@ -252,9 +275,8 @@ function useAdvancedAudioEngine(
 
   const pause = useCallback(() => {
     if (state !== "playing") return;
-    if (startTimeRef.current !== null) {
+    if (startTimeRef.current !== null)
       accumulatedRef.current += (Date.now() - startTimeRef.current) / 1000;
-    }
     stopOscillators();
     startTimeRef.current = null;
     setState("paused");
@@ -262,9 +284,8 @@ function useAdvancedAudioEngine(
 
   const stop = useCallback((): number => {
     let total = accumulatedRef.current;
-    if (state === "playing" && startTimeRef.current !== null) {
+    if (state === "playing" && startTimeRef.current !== null)
       total += (Date.now() - startTimeRef.current) / 1000;
-    }
     stopOscillators();
     startTimeRef.current = null;
     accumulatedRef.current = 0;
@@ -272,7 +293,6 @@ function useAdvancedAudioEngine(
     return Math.floor(total);
   }, [state, stopOscillators]);
 
-  // cleanup on unmount
   useEffect(() => {
     return () => {
       stopOscillators();
@@ -288,6 +308,8 @@ function useSequenceAudioEngine(
   steps: { label: string; hz: number; carrierHz?: number }[],
   volume: number,
 ) {
+  const STEP_DURATION = 8; // seconds per step
+
   const ctxRef = useRef<AudioContext | null>(null);
   const oscRef = useRef<OscillatorNode | null>(null);
   const gainRef = useRef<GainNode | null>(null);
@@ -296,14 +318,15 @@ function useSequenceAudioEngine(
   const accumulatedRef = useRef<number>(0);
   const stepIndexRef = useRef<number>(0);
   const stepTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const countdownTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const [state, setState] = useState<AudioState>("stopped");
   const [activeStep, setActiveStep] = useState<{
     label: string;
     hz: number;
   } | null>(null);
+  const [countdown, setCountdown] = useState<number>(STEP_DURATION);
 
-  // Keep main gain in sync with volume slider while playing
   useEffect(() => {
     if (gainRef.current) {
       gainRef.current.gain.setTargetAtTime(
@@ -314,39 +337,59 @@ function useSequenceAudioEngine(
     }
   }, [volume]);
 
-  const clearStepTimer = useCallback(() => {
+  const clearTimers = useCallback(() => {
     if (stepTimerRef.current !== null) {
       clearInterval(stepTimerRef.current);
       stepTimerRef.current = null;
     }
+    if (countdownTimerRef.current !== null) {
+      clearInterval(countdownTimerRef.current);
+      countdownTimerRef.current = null;
+    }
   }, []);
 
   const stopOscillator = useCallback(() => {
-    clearStepTimer();
+    clearTimers();
     oscRef.current?.stop();
     oscRef.current = null;
     gainRef.current = null;
-  }, [clearStepTimer]);
+  }, [clearTimers]);
+
+  const startCountdown = useCallback(() => {
+    setCountdown(STEP_DURATION);
+    let remaining = STEP_DURATION - 1;
+    if (countdownTimerRef.current !== null)
+      clearInterval(countdownTimerRef.current);
+    countdownTimerRef.current = setInterval(() => {
+      setCountdown(remaining);
+      remaining -= 1;
+      if (remaining < 0) {
+        if (countdownTimerRef.current !== null) {
+          clearInterval(countdownTimerRef.current);
+          countdownTimerRef.current = null;
+        }
+      }
+    }, 1000);
+  }, []);
 
   const advanceStep = useCallback(() => {
     if (!ctxRef.current || !oscRef.current) return;
+    // Play chime at the moment of switch
+    if (ctxRef.current) playChime(ctxRef.current, volume / 100);
     stepIndexRef.current = (stepIndexRef.current + 1) % steps.length;
     const nextStep = steps[stepIndexRef.current];
-    // Use carrierHz (audible) if provided, otherwise fall back to hz
     oscRef.current.frequency.setTargetAtTime(
       nextStep.carrierHz ?? nextStep.hz,
       ctxRef.current.currentTime,
       0.1,
     );
     setActiveStep(nextStep);
-  }, [steps]);
+    startCountdown();
+  }, [steps, volume, startCountdown]);
 
   const play = useCallback(() => {
     if (state === "playing") return;
-
-    if (!ctxRef.current) {
-      ctxRef.current = new AudioContext();
-    }
+    if (!ctxRef.current) ctxRef.current = new AudioContext();
     const ctx = ctxRef.current;
     if (ctx.state === "suspended") void ctx.resume();
 
@@ -357,31 +400,25 @@ function useSequenceAudioEngine(
 
     const osc = ctx.createOscillator();
     osc.type = "sine";
-
-    // Start from beginning or current step depending on resume
     const currentStep = steps[stepIndexRef.current];
-    // Use carrierHz (audible) if provided, otherwise fall back to hz
     osc.frequency.value = currentStep.carrierHz ?? currentStep.hz;
     osc.connect(gain);
     osc.start();
     oscRef.current = osc;
-
     setActiveStep(currentStep);
+    startCountdown();
 
-    // Advance every 8 seconds
     stepTimerRef.current = setInterval(() => {
       advanceStep();
-    }, 8000);
-
+    }, STEP_DURATION * 1000);
     startTimeRef.current = Date.now();
     setState("playing");
-  }, [state, steps, volume, advanceStep]);
+  }, [state, steps, volume, advanceStep, startCountdown]);
 
   const pause = useCallback(() => {
     if (state !== "playing") return;
-    if (startTimeRef.current !== null) {
+    if (startTimeRef.current !== null)
       accumulatedRef.current += (Date.now() - startTimeRef.current) / 1000;
-    }
     stopOscillator();
     startTimeRef.current = null;
     setState("paused");
@@ -390,9 +427,8 @@ function useSequenceAudioEngine(
 
   const stop = useCallback((): number => {
     let total = accumulatedRef.current;
-    if (state === "playing" && startTimeRef.current !== null) {
+    if (state === "playing" && startTimeRef.current !== null)
       total += (Date.now() - startTimeRef.current) / 1000;
-    }
     stopOscillator();
     startTimeRef.current = null;
     accumulatedRef.current = 0;
@@ -402,7 +438,6 @@ function useSequenceAudioEngine(
     return Math.floor(total);
   }, [state, stopOscillator]);
 
-  // cleanup on unmount
   useEffect(() => {
     return () => {
       stopOscillator();
@@ -410,12 +445,194 @@ function useSequenceAudioEngine(
     };
   }, [stopOscillator]);
 
-  return { state, play, pause, stop, activeStep };
+  return { state, play, pause, stop, activeStep, countdown };
+}
+
+/* ── Breathing Binaural audio engine hook ────────────────────────── */
+interface ActiveBreathingPhase {
+  label: string;
+  type: "inhale" | "hold" | "exhale";
+  phaseIndex: number;
+}
+
+function useBreathingBinauralEngine(
+  config: BreathingBinaural | undefined,
+  volume: number,
+) {
+  const ctxRef = useRef<AudioContext | null>(null);
+  const oscLRef = useRef<OscillatorNode | null>(null);
+  const oscRRef = useRef<OscillatorNode | null>(null);
+  const gainRef = useRef<GainNode | null>(null);
+  const phaseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const countdownTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const phaseIndexRef = useRef<number>(0);
+
+  const startTimeRef = useRef<number | null>(null);
+  const accumulatedRef = useRef<number>(0);
+
+  const [state, setState] = useState<AudioState>("stopped");
+  const [activePhase, setActivePhase] = useState<ActiveBreathingPhase | null>(
+    null,
+  );
+  const [countdown, setCountdown] = useState<number>(4);
+
+  useEffect(() => {
+    if (gainRef.current) {
+      gainRef.current.gain.setTargetAtTime(
+        volume / 100,
+        gainRef.current.context.currentTime,
+        0.05,
+      );
+    }
+  }, [volume]);
+
+  const clearPhaseTimer = useCallback(() => {
+    if (phaseTimerRef.current !== null) {
+      clearTimeout(phaseTimerRef.current);
+      phaseTimerRef.current = null;
+    }
+    if (countdownTimerRef.current !== null) {
+      clearInterval(countdownTimerRef.current);
+      countdownTimerRef.current = null;
+    }
+  }, []);
+
+  const stopOscillators = useCallback(() => {
+    clearPhaseTimer();
+    oscLRef.current?.stop();
+    oscLRef.current = null;
+    oscRRef.current?.stop();
+    oscRRef.current = null;
+    gainRef.current = null;
+  }, [clearPhaseTimer]);
+
+  const startCountdown = useCallback((duration: number) => {
+    setCountdown(duration);
+    let remaining = duration - 1;
+    if (countdownTimerRef.current !== null)
+      clearInterval(countdownTimerRef.current);
+    countdownTimerRef.current = setInterval(() => {
+      setCountdown(remaining);
+      remaining -= 1;
+      if (remaining < 0) {
+        if (countdownTimerRef.current !== null) {
+          clearInterval(countdownTimerRef.current);
+          countdownTimerRef.current = null;
+        }
+      }
+    }, 1000);
+  }, []);
+
+  // Recursive phase scheduler
+  const schedulePhase = useCallback(
+    (phases: BreathingPhase[], index: number) => {
+      if (!ctxRef.current || !oscLRef.current || !oscRRef.current) return;
+      const phase = phases[index];
+      const carrier = (config?.baseCarrier ?? 100) + phase.carrierOffset;
+      const beat = config?.binauralHz ?? 40;
+      const ctx = ctxRef.current;
+
+      oscLRef.current.frequency.setTargetAtTime(carrier, ctx.currentTime, 0.3);
+      oscRRef.current.frequency.setTargetAtTime(
+        carrier + beat,
+        ctx.currentTime,
+        0.3,
+      );
+
+      setActivePhase({
+        label: phase.label,
+        type: phase.type,
+        phaseIndex: index,
+      });
+      startCountdown(phase.duration);
+
+      phaseTimerRef.current = setTimeout(() => {
+        // Play chime at phase switch
+        if (ctxRef.current) playChime(ctxRef.current, volume / 100);
+        const nextIndex = (index + 1) % phases.length;
+        phaseIndexRef.current = nextIndex;
+        schedulePhase(phases, nextIndex);
+      }, phase.duration * 1000);
+    },
+    [config, volume, startCountdown],
+  );
+
+  const play = useCallback(() => {
+    if (state === "playing" || !config) return;
+    if (!ctxRef.current) ctxRef.current = new AudioContext();
+    const ctx = ctxRef.current;
+    if (ctx.state === "suspended") void ctx.resume();
+
+    const gain = ctx.createGain();
+    gain.gain.value = volume / 100;
+    gain.connect(ctx.destination);
+    gainRef.current = gain;
+
+    const firstPhase = config.phases[phaseIndexRef.current];
+    const carrier = config.baseCarrier + firstPhase.carrierOffset;
+    const beat = config.binauralHz;
+
+    const oscL = ctx.createOscillator();
+    oscL.type = "sine";
+    oscL.frequency.value = carrier;
+    const panL = ctx.createStereoPanner();
+    panL.pan.value = -1;
+    oscL.connect(panL);
+    panL.connect(gain);
+    oscL.start();
+    oscLRef.current = oscL;
+
+    const oscR = ctx.createOscillator();
+    oscR.type = "sine";
+    oscR.frequency.value = carrier + beat;
+    const panR = ctx.createStereoPanner();
+    panR.pan.value = 1;
+    oscR.connect(panR);
+    panR.connect(gain);
+    oscR.start();
+    oscRRef.current = oscR;
+
+    schedulePhase(config.phases, phaseIndexRef.current);
+
+    startTimeRef.current = Date.now();
+    setState("playing");
+  }, [state, config, volume, schedulePhase]);
+
+  const pause = useCallback(() => {
+    if (state !== "playing") return;
+    if (startTimeRef.current !== null)
+      accumulatedRef.current += (Date.now() - startTimeRef.current) / 1000;
+    stopOscillators();
+    startTimeRef.current = null;
+    setState("paused");
+    setActivePhase(null);
+  }, [state, stopOscillators]);
+
+  const stop = useCallback((): number => {
+    let total = accumulatedRef.current;
+    if (state === "playing" && startTimeRef.current !== null)
+      total += (Date.now() - startTimeRef.current) / 1000;
+    stopOscillators();
+    startTimeRef.current = null;
+    accumulatedRef.current = 0;
+    phaseIndexRef.current = 0;
+    setState("stopped");
+    setActivePhase(null);
+    return Math.floor(total);
+  }, [state, stopOscillators]);
+
+  useEffect(() => {
+    return () => {
+      stopOscillators();
+      void ctxRef.current?.close();
+    };
+  }, [stopOscillators]);
+
+  return { state, play, pause, stop, activePhase, countdown };
 }
 
 /* ── Unified audio engine wrapper ────────────────────────────────── */
 function useAudioEngine(mood: MoodData, volume: number) {
-  // Always call both hooks (React rules — no conditional hooks)
   const standard = useAdvancedAudioEngine(
     mood.hz,
     volume,
@@ -423,15 +640,41 @@ function useAudioEngine(mood: MoodData, volume: number) {
     mood.gammaBurst,
   );
   const sequence = useSequenceAudioEngine(mood.sequenceFreqs ?? [], volume);
+  const breathing = useBreathingBinauralEngine(mood.breathingBinaural, volume);
 
   const isSequence = mood.sequenceFreqs !== undefined;
+  const isBreathing = mood.breathingBinaural !== undefined;
 
+  if (isBreathing) {
+    return {
+      state: breathing.state,
+      play: breathing.play,
+      pause: breathing.pause,
+      stop: breathing.stop,
+      activeStep: null,
+      activePhase: breathing.activePhase,
+      countdown: breathing.countdown,
+    };
+  }
+  if (isSequence) {
+    return {
+      state: sequence.state,
+      play: sequence.play,
+      pause: sequence.pause,
+      stop: sequence.stop,
+      activeStep: sequence.activeStep,
+      activePhase: null,
+      countdown: sequence.countdown,
+    };
+  }
   return {
-    state: isSequence ? sequence.state : standard.state,
-    play: isSequence ? sequence.play : standard.play,
-    pause: isSequence ? sequence.pause : standard.pause,
-    stop: isSequence ? sequence.stop : standard.stop,
-    activeStep: isSequence ? sequence.activeStep : null,
+    state: standard.state,
+    play: standard.play,
+    pause: standard.pause,
+    stop: standard.stop,
+    activeStep: null,
+    activePhase: null,
+    countdown: null,
   };
 }
 
@@ -439,9 +682,7 @@ function useAudioEngine(mood: MoodData, volume: number) {
 function BackgroundMesh() {
   return (
     <div className="fixed inset-0 pointer-events-none z-0" aria-hidden>
-      {/* Base gradient */}
       <div className="absolute inset-0 bg-background" />
-      {/* Atmospheric blobs */}
       <div
         className="absolute -top-40 -left-40 w-[600px] h-[600px] rounded-full opacity-20"
         style={{
@@ -474,7 +715,6 @@ function BackgroundMesh() {
 function AuthButton() {
   const { identity, login, clear, isLoggingIn } = useInternetIdentity();
   const isLoggedIn = !!identity;
-
   return (
     <Button
       variant="ghost"
@@ -506,7 +746,6 @@ interface MoodSelectorProps {
 function MoodSelector({ onSelect }: MoodSelectorProps) {
   return (
     <div className="relative z-10 min-h-screen flex flex-col">
-      {/* Header */}
       <header className="flex items-center justify-between px-6 py-5">
         <div className="flex items-center gap-2.5">
           <Waves
@@ -523,7 +762,6 @@ function MoodSelector({ onSelect }: MoodSelectorProps) {
         <AuthButton />
       </header>
 
-      {/* Hero text */}
       <main className="flex-1 flex flex-col items-center px-6 pt-8 pb-16">
         <div
           className="animate-fade-up opacity-0 text-center mb-3"
@@ -549,7 +787,6 @@ function MoodSelector({ onSelect }: MoodSelectorProps) {
           </p>
         </div>
 
-        {/* Mood grid */}
         <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 sm:gap-4 w-full max-w-3xl">
           {MOODS.map((m, i) => (
             <button
@@ -558,25 +795,18 @@ function MoodSelector({ onSelect }: MoodSelectorProps) {
               data-ocid={`mood.card.${i + 1}`}
               onClick={() => onSelect(m)}
               className={`animate-fade-up opacity-0 mood-card-${i + 1} group relative glass-card rounded-2xl p-5 text-left transition-all duration-300 hover:scale-[1.03] hover:-translate-y-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/60`}
-              style={
-                {
-                  "--card-hue": m.hue,
-                } as React.CSSProperties
-              }
+              style={{ "--card-hue": m.hue } as React.CSSProperties}
             >
-              {/* Hover glow border */}
               <div
                 className="absolute inset-0 rounded-2xl opacity-0 group-hover:opacity-100 transition-opacity duration-300 pointer-events-none"
                 style={{
                   boxShadow: `0 0 0 1px oklch(0.72 0.22 ${m.hue} / 0.5), 0 0 24px oklch(0.72 0.22 ${m.hue} / 0.2)`,
                 }}
               />
-
               <div className="text-2xl mb-3 leading-none">{m.emoji}</div>
               <div className="font-display font-semibold text-base leading-tight mb-1">
                 {m.mood}
               </div>
-
               <div className="text-xs text-muted-foreground leading-snug">
                 {m.description}
               </div>
@@ -585,7 +815,6 @@ function MoodSelector({ onSelect }: MoodSelectorProps) {
         </div>
       </main>
 
-      {/* Footer */}
       <footer className="text-center py-4 px-6">
         <p className="text-xs text-muted-foreground/50">
           © {new Date().getFullYear()}. Built with love using{" "}
@@ -603,6 +832,87 @@ function MoodSelector({ onSelect }: MoodSelectorProps) {
   );
 }
 
+/* ── Breathing phase indicator ───────────────────────────────────── */
+const PHASE_LABELS: { inhale: string; hold: string; exhale: string } = {
+  inhale: "Breathe In",
+  hold: "Hold",
+  exhale: "Breathe Out",
+};
+
+function BreathingIndicator({
+  phase,
+  hue,
+  countdown,
+}: {
+  phase: ActiveBreathingPhase;
+  hue: number;
+  countdown?: number;
+}) {
+  const orbColor = `oklch(0.72 0.22 ${hue})`;
+  const steps = ["Inhale", "Hold", "Exhale", "Hold"];
+  return (
+    <div className="flex flex-col items-center gap-4">
+      {/* Phase label + countdown */}
+      <div className="flex flex-col items-center gap-1">
+        <div
+          className="text-2xl font-display font-semibold tracking-widest uppercase animate-fade-up opacity-0"
+          style={{
+            color: orbColor,
+            animationDuration: "0.3s",
+            animationFillMode: "forwards",
+          }}
+          key={phase.phaseIndex}
+        >
+          {PHASE_LABELS[phase.type]}
+        </div>
+        {countdown !== undefined && countdown > 0 && (
+          <div
+            className="text-sm font-mono tabular-nums"
+            style={{ color: `oklch(0.72 0.22 ${hue} / 0.45)` }}
+          >
+            {countdown}s
+          </div>
+        )}
+      </div>
+
+      {/* Step dots */}
+      <div className="flex items-center gap-2">
+        {steps.map((s, i) => {
+          const stepKey = `breathing-step-${i}`;
+          return (
+            <div key={stepKey} className="flex flex-col items-center gap-1">
+              <div
+                className="w-2.5 h-2.5 rounded-full transition-all duration-300"
+                style={{
+                  background:
+                    i === phase.phaseIndex
+                      ? orbColor
+                      : `oklch(0.72 0.22 ${hue} / 0.2)`,
+                  transform: i === phase.phaseIndex ? "scale(1.4)" : "scale(1)",
+                  boxShadow:
+                    i === phase.phaseIndex ? `0 0 8px ${orbColor}` : "none",
+                }}
+              />
+              <span
+                className="text-[10px] uppercase tracking-wider"
+                style={{
+                  color:
+                    i === phase.phaseIndex
+                      ? orbColor
+                      : `oklch(0.72 0.22 ${hue} / 0.35)`,
+                  fontWeight: i === phase.phaseIndex ? 600 : 400,
+                }}
+              >
+                {s}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 /* ── Frequency Player ────────────────────────────────────────────── */
 interface FrequencyPlayerProps {
   mood: MoodData;
@@ -611,27 +921,22 @@ interface FrequencyPlayerProps {
 
 function FrequencyPlayer({ mood, onBack }: FrequencyPlayerProps) {
   const [volume, setVolume] = useState(50);
-  const { state, play, pause, stop, activeStep } = useAudioEngine(mood, volume);
+  const { state, play, pause, stop, activeStep, activePhase, countdown } =
+    useAudioEngine(mood, volume);
   const { actor } = useActor();
   const { identity } = useInternetIdentity();
 
   const isPlaying = state === "playing";
 
   const handlePlayPause = () => {
-    if (isPlaying) {
-      pause();
-    } else {
-      play();
-    }
+    isPlaying ? pause() : play();
   };
 
   const handleStop = async () => {
     const duration = stop();
     if (duration <= 0) return;
-
     const isLoggedIn = !!identity;
     if (!isLoggedIn || !actor) return;
-
     try {
       await actor.logSession(mood.mood, BigInt(mood.hz), BigInt(duration));
       toast.success("Session saved", {
@@ -639,7 +944,7 @@ function FrequencyPlayer({ mood, onBack }: FrequencyPlayerProps) {
         duration: 4000,
       });
     } catch {
-      // silently skip logging errors
+      /* silently skip */
     }
   };
 
@@ -652,9 +957,16 @@ function FrequencyPlayer({ mood, onBack }: FrequencyPlayerProps) {
   const orbColorDim = `oklch(0.65 0.18 ${mood.hue} / 0.6)`;
   const orbColorFaint = `oklch(0.60 0.15 ${mood.hue} / 0.15)`;
 
+  const getBreathingScale = () => {
+    if (!activePhase) return 1;
+    if (activePhase.type === "inhale") return 1.18;
+    if (activePhase.type === "exhale") return 0.88;
+    return activePhase.phaseIndex === 1 ? 1.18 : 0.88;
+  };
+  const breathingScale = mood.breathingBinaural ? getBreathingScale() : 1;
+
   return (
     <div className="relative z-10 min-h-screen flex flex-col">
-      {/* Header */}
       <header className="flex items-center justify-between px-6 py-5">
         <button
           type="button"
@@ -668,9 +980,8 @@ function FrequencyPlayer({ mood, onBack }: FrequencyPlayerProps) {
         <AuthButton />
       </header>
 
-      {/* Main content */}
-      <main className="flex-1 flex flex-col items-center justify-center px-6 pb-16 gap-10">
-        {/* Mood & frequency label */}
+      <main className="flex-1 flex flex-col items-center justify-center px-6 pb-16 gap-8">
+        {/* Mood label */}
         <div className="text-center animate-fade-up opacity-0">
           <div className="text-3xl mb-3">{mood.emoji}</div>
           <h2 className="font-display text-4xl sm:text-5xl font-semibold mb-2">
@@ -686,7 +997,6 @@ function FrequencyPlayer({ mood, onBack }: FrequencyPlayerProps) {
 
         {/* Orb */}
         <div className="relative flex items-center justify-center w-52 h-52 sm:w-64 sm:h-64">
-          {/* Expanding ring — only when playing */}
           {isPlaying && (
             <>
               <div
@@ -707,15 +1017,25 @@ function FrequencyPlayer({ mood, onBack }: FrequencyPlayerProps) {
             </>
           )}
 
-          {/* Core orb */}
           <div
-            className={`relative w-40 h-40 sm:w-48 sm:h-48 rounded-full ${isPlaying ? "animate-orb-pulse" : "animate-float"}`}
+            className={`relative w-40 h-40 sm:w-48 sm:h-48 rounded-full ${
+              mood.breathingBinaural
+                ? ""
+                : isPlaying
+                  ? "animate-orb-pulse"
+                  : "animate-float"
+            }`}
             style={{
               background: `radial-gradient(circle at 35% 35%, ${orbColor}, ${orbColorDim} 50%, oklch(0.20 0.08 ${mood.hue}) 100%)`,
               boxShadow: `0 0 40px ${orbColorDim}, 0 0 80px oklch(0.65 0.18 ${mood.hue} / 0.3), inset 0 0 30px oklch(0.20 0.08 ${mood.hue} / 0.5)`,
+              transform: mood.breathingBinaural
+                ? `scale(${breathingScale})`
+                : undefined,
+              transition: mood.breathingBinaural
+                ? "transform 3.5s ease-in-out"
+                : undefined,
             }}
           >
-            {/* Inner light spot */}
             <div
               className="absolute top-1/4 left-1/4 w-1/4 h-1/4 rounded-full"
               style={{
@@ -727,10 +1047,19 @@ function FrequencyPlayer({ mood, onBack }: FrequencyPlayerProps) {
           </div>
         </div>
 
-        {/* Active mantra label for sequence mode */}
+        {/* Breathing phase indicator */}
+        {isPlaying && activePhase && (
+          <BreathingIndicator
+            phase={activePhase}
+            hue={mood.hue}
+            countdown={countdown ?? undefined}
+          />
+        )}
+
+        {/* Sequence mantra label */}
         {isPlaying && activeStep && (
           <div
-            className="flex items-center gap-2 px-4 py-2 rounded-full text-sm font-semibold tracking-wide animate-fade-up opacity-0"
+            className="flex items-center gap-3 px-4 py-2 rounded-full text-sm font-semibold tracking-wide animate-fade-up opacity-0"
             style={{
               color: orbColor,
               background: `oklch(0.72 0.22 ${mood.hue} / 0.12)`,
@@ -740,6 +1069,14 @@ function FrequencyPlayer({ mood, onBack }: FrequencyPlayerProps) {
             }}
           >
             <span>{activeStep.label}</span>
+            {countdown !== null && countdown > 0 && (
+              <span
+                className="font-mono text-xs tabular-nums"
+                style={{ color: `oklch(0.72 0.22 ${mood.hue} / 0.45)` }}
+              >
+                {countdown}s
+              </span>
+            )}
           </div>
         )}
 
@@ -798,7 +1135,6 @@ function FrequencyPlayer({ mood, onBack }: FrequencyPlayerProps) {
           />
         </div>
 
-        {/* Session saved toast anchor */}
         <div data-ocid="session.success_state" className="hidden" />
 
         {/* Listening tip */}
@@ -816,7 +1152,6 @@ function FrequencyPlayer({ mood, onBack }: FrequencyPlayerProps) {
           </p>
         )}
 
-        {/* Help text */}
         <p className="text-xs text-muted-foreground/40 text-center max-w-xs leading-relaxed">
           {identity
             ? "Sessions are saved when you press stop."
@@ -824,7 +1159,6 @@ function FrequencyPlayer({ mood, onBack }: FrequencyPlayerProps) {
         </p>
       </main>
 
-      {/* Footer */}
       <footer className="text-center py-4 px-6">
         <p className="text-xs text-muted-foreground/50">
           © {new Date().getFullYear()}. Built with love using{" "}
@@ -845,7 +1179,6 @@ function FrequencyPlayer({ mood, onBack }: FrequencyPlayerProps) {
 /* ── App root ────────────────────────────────────────────────────── */
 export default function App() {
   const [selectedMood, setSelectedMood] = useState<MoodData | null>(null);
-
   return (
     <div className="noise-overlay relative">
       <BackgroundMesh />
