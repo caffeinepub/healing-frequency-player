@@ -1,22 +1,33 @@
 # Healing Frequency Player
 
 ## Current State
-App has 9 mood cards: 8 standard healing frequency tones + 1 "Libido Booster" with binaural + gamma layers. Audio is generated via Web Audio API (sine oscillators). The `MoodData` interface supports `binauralBeat` and `gammaBurst` fields.
+The app has 8 main mood cards and 4 special cards (Libido Booster, Brain Theta Waves, OHKS, 4-4-4-4) shown in a "You May Also Like" section. All cards are freely accessible. Session logging is available for signed-in users. No payment or trial system exists.
 
 ## Requested Changes (Diff)
 
 ### Add
-- **Brain Theta Waves** card: 6 Hz theta binaural beat layered over a 432 Hz carrier tone. Promotes deep relaxation, meditation, memory, and creativity. Uses `binauralBeat: 6` (left ear: 432 Hz, right ear: 438 Hz).
-- **OM 136.1 Hz (Cosmic Frequency)** card: Pure 136.1 Hz tone, the resonant frequency of Earth's year (Om/Aum frequency). Promotes grounding, spiritual connection, and inner peace.
+- 7-day free trial tracking per user (using first-visit timestamp stored in backend)
+- Stripe payment integration for a monthly "Premium" subscription that unlocks the 4 special cards
+- Backend endpoints: `getTrialStatus` (returns trial start time and whether trial is active), `startTrial` (records first visit), `checkPremiumAccess` (returns whether user has active premium subscription)
+- Stripe checkout session creation and webhook handling via Caffeine Stripe component
+- Premium lock overlay on special cards when trial is expired and user is not subscribed
+- Upgrade/paywall modal or screen shown when a locked card is clicked
+- Trial countdown banner showing days remaining during free trial
 
 ### Modify
-- `MOODS` array: append the two new entries.
+- Special card click behavior: check access before opening the player; if locked, show upgrade prompt instead
+- Backend to include trial start tracking alongside session logging
 
 ### Remove
-- Nothing removed.
+- Nothing removed
 
 ## Implementation Plan
-1. Add `Brain Theta Waves` entry to MOODS with hz: 432, binauralBeat: 6, hue ~260 (indigo/deep blue), emoji 🧠, description "Deep relaxation, meditation & creativity".
-2. Add `OM 136.1 Hz` entry to MOODS with hz: 136.1, hue ~45 (golden/amber), emoji 🕉️, description "Cosmic grounding, Earth's resonance".
-3. The existing audio engine already handles fractional Hz (oscillator frequency accepts floats) and binaural beats — no engine changes needed.
-4. Update `data-ocid` indices for the two new cards (10 and 11).
+1. Select `authorization` and `stripe` Caffeine components
+2. Generate Motoko backend with trial tracking, premium access check, and Stripe subscription management
+3. Update frontend to:
+   a. On first visit/sign-in, call `startTrial` to record trial start
+   b. Call `getTrialStatus` to determine if trial is still active
+   c. Check premium status via Stripe component hooks
+   d. Show lock overlay on special cards if trial expired and not premium
+   e. Show trial countdown banner when trial is active
+   f. Show upgrade modal/screen with Stripe checkout when locked card is tapped

@@ -1,17 +1,21 @@
+import { UpgradeModal } from "@/components/UpgradeModal";
 import { Button } from "@/components/ui/button";
 import { Slider } from "@/components/ui/slider";
 import { Toaster } from "@/components/ui/sonner";
 import { useActor } from "@/hooks/useActor";
 import { useInternetIdentity } from "@/hooks/useInternetIdentity";
+import { usePremium } from "@/hooks/usePremium";
 import {
   ChevronLeft,
   LogIn,
   LogOut,
   Pause,
   Play,
+  Sparkles,
   Square,
   Waves,
 } from "lucide-react";
+import { LockKeyhole } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 
@@ -41,7 +45,7 @@ interface MoodData {
   breathingBinaural?: BreathingBinaural;
 }
 
-const MOODS: MoodData[] = [
+const MAIN_MOODS: MoodData[] = [
   {
     mood: "Anxious",
     hz: 396,
@@ -98,6 +102,9 @@ const MOODS: MoodData[] = [
     emoji: "☀️",
     hue: 80,
   },
+];
+
+const SPECIAL_MOODS: MoodData[] = [
   {
     mood: "Libido Booster",
     hz: 417,
@@ -147,7 +154,7 @@ const MOODS: MoodData[] = [
   },
 ];
 
-/* ── Shared chime helper ─────────────────────────────────────────── */
+/* ── Shared chime helper (used by OHKS sequence) ─────────────────── */
 function playChime(ctx: AudioContext, volume: number) {
   const osc = ctx.createOscillator();
   const gain = ctx.createGain();
@@ -159,6 +166,43 @@ function playChime(ctx: AudioContext, volume: number) {
   gain.connect(ctx.destination);
   osc.start(ctx.currentTime);
   osc.stop(ctx.currentTime + 0.25);
+}
+
+/* ── Breathing phase chime (used by 4-4-4-4) ────────────────────── */
+function playBreathingPhaseChime(
+  ctx: AudioContext,
+  volume: number,
+  phaseType: "inhale" | "hold" | "exhale",
+) {
+  const baseGain = volume * 0.25;
+  const now = ctx.currentTime;
+
+  const playNote = (freq: number, startOffset: number, duration: number) => {
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = "sine";
+    osc.frequency.value = freq;
+    gain.gain.setValueAtTime(0.001, now + startOffset);
+    gain.gain.linearRampToValueAtTime(baseGain, now + startOffset + 0.02);
+    gain.gain.exponentialRampToValueAtTime(
+      0.0001,
+      now + startOffset + duration,
+    );
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start(now + startOffset);
+    osc.stop(now + startOffset + duration + 0.05);
+  };
+
+  if (phaseType === "inhale") {
+    playNote(440, 0, 0.45);
+    playNote(550, 0.12, 0.45);
+  } else if (phaseType === "hold") {
+    playNote(480, 0, 0.55);
+  } else {
+    playNote(550, 0, 0.45);
+    playNote(400, 0.12, 0.45);
+  }
 }
 
 /* ── Audio engine hook ───────────────────────────────────────────── */
@@ -308,7 +352,7 @@ function useSequenceAudioEngine(
   steps: { label: string; hz: number; carrierHz?: number }[],
   volume: number,
 ) {
-  const STEP_DURATION = 8; // seconds per step
+  const STEP_DURATION = 8;
 
   const ctxRef = useRef<AudioContext | null>(null);
   const oscRef = useRef<OscillatorNode | null>(null);
@@ -374,7 +418,6 @@ function useSequenceAudioEngine(
 
   const advanceStep = useCallback(() => {
     if (!ctxRef.current || !oscRef.current) return;
-    // Play chime at the moment of switch
     if (ctxRef.current) playChime(ctxRef.current, volume / 100);
     stepIndexRef.current = (stepIndexRef.current + 1) % steps.length;
     const nextStep = steps[stepIndexRef.current];
@@ -523,7 +566,6 @@ function useBreathingBinauralEngine(
     }, 1000);
   }, []);
 
-  // Recursive phase scheduler
   const schedulePhase = useCallback(
     (phases: BreathingPhase[], index: number) => {
       if (!ctxRef.current || !oscLRef.current || !oscRRef.current) return;
@@ -547,9 +589,10 @@ function useBreathingBinauralEngine(
       startCountdown(phase.duration);
 
       phaseTimerRef.current = setTimeout(() => {
-        // Play chime at phase switch
-        if (ctxRef.current) playChime(ctxRef.current, volume / 100);
         const nextIndex = (index + 1) % phases.length;
+        const nextPhaseType = phases[nextIndex].type;
+        if (ctxRef.current)
+          playBreathingPhaseChime(ctxRef.current, volume / 100, nextPhaseType);
         phaseIndexRef.current = nextIndex;
         schedulePhase(phases, nextIndex);
       }, phase.duration * 1000);
@@ -741,9 +784,20 @@ function AuthButton() {
 /* ── Mood Selector ───────────────────────────────────────────────── */
 interface MoodSelectorProps {
   onSelect: (mood: MoodData) => void;
+  isPremiumAccess: boolean;
+  isLoading: boolean;
+  trialActive: boolean;
+  daysLeft: number | null;
 }
 
-function MoodSelector({ onSelect }: MoodSelectorProps) {
+function MoodSelector({
+  onSelect,
+  isPremiumAccess,
+  isLoading,
+  trialActive,
+  daysLeft,
+}: MoodSelectorProps) {
+  const [upgradeOpen, setUpgradeOpen] = useState(false);
   return (
     <div className="relative z-10 min-h-screen flex flex-col">
       <header className="flex items-center justify-between px-6 py-5">
@@ -787,8 +841,9 @@ function MoodSelector({ onSelect }: MoodSelectorProps) {
           </p>
         </div>
 
+        {/* Main mood grid */}
         <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 sm:gap-4 w-full max-w-3xl">
-          {MOODS.map((m, i) => (
+          {MAIN_MOODS.map((m, i) => (
             <button
               key={m.mood}
               type="button"
@@ -813,6 +868,162 @@ function MoodSelector({ onSelect }: MoodSelectorProps) {
             </button>
           ))}
         </div>
+
+        {/* You May Also Like — special cards */}
+        <div className="w-full max-w-3xl mt-14">
+          {/* Section divider */}
+          <div className="flex items-center gap-4 mb-6">
+            <div
+              className="flex-1 h-px"
+              style={{
+                background:
+                  "linear-gradient(to right, transparent, oklch(0.72 0.19 195 / 0.25))",
+              }}
+            />
+            <div className="flex items-center gap-2">
+              <Sparkles
+                className="w-3.5 h-3.5"
+                style={{ color: "oklch(0.72 0.19 195 / 0.6)" }}
+              />
+              <span
+                className="text-xs font-medium tracking-widest uppercase"
+                style={{ color: "oklch(0.72 0.19 195 / 0.55)" }}
+              >
+                You May Also Like
+              </span>
+              {isPremiumAccess && trialActive && daysLeft !== null && (
+                <span
+                  className="text-[10px] font-semibold px-2 py-0.5 rounded-full"
+                  style={{
+                    color: "oklch(0.88 0.14 80)",
+                    background: "oklch(0.72 0.22 80 / 0.15)",
+                    border: "1px solid oklch(0.72 0.22 80 / 0.25)",
+                  }}
+                >
+                  {daysLeft}d free trial
+                </span>
+              )}
+              {isPremiumAccess && !trialActive && !isLoading && (
+                <span
+                  className="text-[10px] font-semibold px-2 py-0.5 rounded-full"
+                  style={{
+                    color: "oklch(0.88 0.14 290)",
+                    background: "oklch(0.72 0.22 290 / 0.15)",
+                    border: "1px solid oklch(0.72 0.22 290 / 0.25)",
+                  }}
+                >
+                  Premium
+                </span>
+              )}
+              <Sparkles
+                className="w-3.5 h-3.5"
+                style={{ color: "oklch(0.72 0.19 195 / 0.6)" }}
+              />
+            </div>
+            <div
+              className="flex-1 h-px"
+              style={{
+                background:
+                  "linear-gradient(to left, transparent, oklch(0.72 0.19 195 / 0.25))",
+              }}
+            />
+          </div>
+
+          {/* Special cards — horizontal layout */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
+            {SPECIAL_MOODS.map((m, i) => (
+              <button
+                key={m.mood}
+                type="button"
+                data-ocid={`special.card.${i + 1}`}
+                onClick={() =>
+                  isPremiumAccess || isLoading
+                    ? onSelect(m)
+                    : setUpgradeOpen(true)
+                }
+                className="group relative flex items-center gap-4 rounded-2xl p-4 text-left transition-all duration-300 hover:scale-[1.02] hover:-translate-y-0.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/60"
+                style={{
+                  background: `oklch(0.16 0.03 ${m.hue} / 0.6)`,
+                  border: `1px solid oklch(0.72 0.22 ${m.hue} / 0.18)`,
+                  backdropFilter: "blur(12px)",
+                }}
+              >
+                {/* Hover glow */}
+                <div
+                  className="absolute inset-0 rounded-2xl opacity-0 group-hover:opacity-100 transition-opacity duration-300 pointer-events-none"
+                  style={{
+                    boxShadow: `0 0 0 1px oklch(0.72 0.22 ${m.hue} / 0.45), 0 0 20px oklch(0.72 0.22 ${m.hue} / 0.15)`,
+                  }}
+                />
+                {!isPremiumAccess && !isLoading && (
+                  <div
+                    className="absolute inset-0 rounded-2xl flex items-center justify-center pointer-events-none z-10"
+                    style={{
+                      background: "oklch(0.10 0.03 265 / 0.55)",
+                      backdropFilter: "blur(2px)",
+                    }}
+                  >
+                    <div
+                      className="w-8 h-8 rounded-full flex items-center justify-center"
+                      style={{
+                        background: "oklch(0.18 0.04 265 / 0.9)",
+                        border: "1px solid oklch(0.30 0.08 265)",
+                      }}
+                    >
+                      <LockKeyhole
+                        className="w-3.5 h-3.5"
+                        style={{ color: "oklch(0.72 0.22 290)" }}
+                      />
+                    </div>
+                  </div>
+                )}
+
+                {/* Mini orb */}
+                <div
+                  className="relative shrink-0 w-12 h-12 rounded-full flex items-center justify-center text-xl"
+                  style={{
+                    background: `radial-gradient(circle at 35% 35%, oklch(0.72 0.22 ${m.hue}), oklch(0.45 0.18 ${m.hue}))`,
+                    boxShadow: `0 0 16px oklch(0.65 0.18 ${m.hue} / 0.4)`,
+                  }}
+                >
+                  {m.emoji}
+                </div>
+
+                {/* Text */}
+                <div className="flex flex-col gap-0.5 min-w-0">
+                  <div
+                    className="font-display font-semibold text-sm leading-tight"
+                    style={{ color: `oklch(0.88 0.08 ${m.hue})` }}
+                  >
+                    {m.mood}
+                  </div>
+                  <div className="text-xs text-muted-foreground leading-snug">
+                    {m.description}
+                  </div>
+                  {/* Badge tag */}
+                  <div className="mt-1.5">
+                    <span
+                      className="inline-block text-[10px] font-medium px-2 py-0.5 rounded-full uppercase tracking-wider"
+                      style={{
+                        color: `oklch(0.78 0.14 ${m.hue})`,
+                        background: `oklch(0.72 0.22 ${m.hue} / 0.12)`,
+                        border: `1px solid oklch(0.72 0.22 ${m.hue} / 0.2)`,
+                      }}
+                    >
+                      {m.binauralBeat !== undefined
+                        ? "Binaural · Headphones"
+                        : m.sequenceFreqs !== undefined
+                          ? "Mantra Sequence"
+                          : m.breathingBinaural !== undefined
+                            ? "Breathwork · Binaural"
+                            : "Special"}
+                    </span>
+                  </div>
+                </div>
+              </button>
+            ))}
+          </div>
+        </div>
       </main>
 
       <footer className="text-center py-4 px-6">
@@ -828,6 +1039,7 @@ function MoodSelector({ onSelect }: MoodSelectorProps) {
           </a>
         </p>
       </footer>
+      <UpgradeModal open={upgradeOpen} onClose={() => setUpgradeOpen(false)} />
     </div>
   );
 }
@@ -852,7 +1064,6 @@ function BreathingIndicator({
   const steps = ["Inhale", "Hold", "Exhale", "Hold"];
   return (
     <div className="flex flex-col items-center gap-4">
-      {/* Phase label + countdown */}
       <div className="flex flex-col items-center gap-1">
         <div
           className="text-2xl font-display font-semibold tracking-widest uppercase animate-fade-up opacity-0"
@@ -875,7 +1086,6 @@ function BreathingIndicator({
         )}
       </div>
 
-      {/* Step dots */}
       <div className="flex items-center gap-2">
         {steps.map((s, i) => {
           const stepKey = `breathing-step-${i}`;
@@ -910,6 +1120,52 @@ function BreathingIndicator({
         })}
       </div>
     </div>
+  );
+}
+
+/* ── Breathing Ring visual animation ────────────────────────────── */
+interface BreathingRingProps {
+  phase: ActiveBreathingPhase;
+  hue: number;
+  targetScale: number;
+  phaseDuration: number;
+}
+
+function BreathingRing({
+  phase,
+  hue,
+  targetScale,
+  phaseDuration,
+}: BreathingRingProps) {
+  // Determine if this is a "hold" phase — we add a gentle pulse animation
+  const isHold = phase.type === "hold";
+
+  return (
+    <>
+      {/* Primary expanding/contracting ring */}
+      <div
+        className="absolute inset-0 rounded-full pointer-events-none"
+        style={{
+          border: `2px solid oklch(0.75 0.22 ${hue} / 0.55)`,
+          boxShadow: `0 0 16px oklch(0.72 0.22 ${hue} / 0.35), inset 0 0 12px oklch(0.72 0.22 ${hue} / 0.1)`,
+          transform: `scale(${targetScale})`,
+          transition: `transform ${phaseDuration}s ease-in-out, box-shadow ${phaseDuration}s ease-in-out`,
+          animation: isHold
+            ? "breath-hold-pulse 2s ease-in-out infinite"
+            : "none",
+        }}
+      />
+      {/* Outer diffuse halo ring */}
+      <div
+        className="absolute inset-0 rounded-full pointer-events-none"
+        style={{
+          border: `1px solid oklch(0.72 0.22 ${hue} / 0.2)`,
+          transform: `scale(${targetScale * 1.12})`,
+          transition: `transform ${phaseDuration}s ease-in-out`,
+          filter: "blur(3px)",
+        }}
+      />
+    </>
   );
 }
 
@@ -965,6 +1221,16 @@ function FrequencyPlayer({ mood, onBack }: FrequencyPlayerProps) {
   };
   const breathingScale = mood.breathingBinaural ? getBreathingScale() : 1;
 
+  // Ring target scale — larger than orb scale so it surrounds the orb
+  const getRingScale = () => {
+    if (!activePhase) return 1;
+    if (activePhase.type === "inhale") return 1.6;
+    if (activePhase.type === "exhale") return 0.8;
+    return activePhase.phaseIndex === 1 ? 1.6 : 0.8;
+  };
+  const ringScale = getRingScale();
+  const phaseDuration = 4; // seconds — matches 4-4-4-4 phase duration
+
   return (
     <div className="relative z-10 min-h-screen flex flex-col">
       <header className="flex items-center justify-between px-6 py-5">
@@ -981,7 +1247,6 @@ function FrequencyPlayer({ mood, onBack }: FrequencyPlayerProps) {
       </header>
 
       <main className="flex-1 flex flex-col items-center justify-center px-6 pb-16 gap-8">
-        {/* Mood label */}
         <div className="text-center animate-fade-up opacity-0">
           <div className="text-3xl mb-3">{mood.emoji}</div>
           <h2 className="font-display text-4xl sm:text-5xl font-semibold mb-2">
@@ -1017,6 +1282,16 @@ function FrequencyPlayer({ mood, onBack }: FrequencyPlayerProps) {
             </>
           )}
 
+          {/* Breathing ring — only for 4-4-4-4 */}
+          {mood.breathingBinaural && isPlaying && activePhase && (
+            <BreathingRing
+              phase={activePhase}
+              hue={mood.hue}
+              targetScale={ringScale}
+              phaseDuration={phaseDuration}
+            />
+          )}
+
           <div
             className={`relative w-40 h-40 sm:w-48 sm:h-48 rounded-full ${
               mood.breathingBinaural
@@ -1047,7 +1322,6 @@ function FrequencyPlayer({ mood, onBack }: FrequencyPlayerProps) {
           </div>
         </div>
 
-        {/* Breathing phase indicator */}
         {isPlaying && activePhase && (
           <BreathingIndicator
             phase={activePhase}
@@ -1056,7 +1330,6 @@ function FrequencyPlayer({ mood, onBack }: FrequencyPlayerProps) {
           />
         )}
 
-        {/* Sequence mantra label */}
         {isPlaying && activeStep && (
           <div
             className="flex items-center gap-3 px-4 py-2 rounded-full text-sm font-semibold tracking-wide animate-fade-up opacity-0"
@@ -1137,7 +1410,6 @@ function FrequencyPlayer({ mood, onBack }: FrequencyPlayerProps) {
 
         <div data-ocid="session.success_state" className="hidden" />
 
-        {/* Listening tip */}
         {isPlaying && (
           <p
             className="text-xs text-center max-w-xs leading-relaxed px-4 py-2.5 rounded-xl"
@@ -1179,6 +1451,25 @@ function FrequencyPlayer({ mood, onBack }: FrequencyPlayerProps) {
 /* ── App root ────────────────────────────────────────────────────── */
 export default function App() {
   const [selectedMood, setSelectedMood] = useState<MoodData | null>(null);
+  const { isPremium, trialActive, daysLeft, isLoading, refresh } = usePremium();
+  const isPremiumAccess = isLoading || isPremium || trialActive;
+
+  // Handle Stripe return
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("premium") === "success") {
+      void refresh().then(() => {
+        toast.success("Premium activated! 🎉", {
+          description: "You now have full access to all special frequencies.",
+          duration: 5000,
+        });
+      });
+      // clean up URL
+      const clean = window.location.pathname;
+      window.history.replaceState({}, "", clean);
+    }
+  }, [refresh]);
+
   return (
     <div className="noise-overlay relative">
       <BackgroundMesh />
@@ -1188,7 +1479,13 @@ export default function App() {
           onBack={() => setSelectedMood(null)}
         />
       ) : (
-        <MoodSelector onSelect={setSelectedMood} />
+        <MoodSelector
+          onSelect={setSelectedMood}
+          isPremiumAccess={isPremiumAccess}
+          isLoading={isLoading}
+          trialActive={trialActive}
+          daysLeft={daysLeft}
+        />
       )}
       <Toaster
         theme="dark"

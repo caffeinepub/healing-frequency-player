@@ -23,20 +23,20 @@
     --radius: 1rem;
 
     /* Deep midnight spa palette — dark mode only */
-    --background: 0.10 0.025 265;
+    --background: 0.1 0.025 265;
     --foreground: 0.93 0.02 240;
     --card: 0.14 0.03 265;
     --card-foreground: 0.93 0.02 240;
     --popover: 0.14 0.03 265;
     --popover-foreground: 0.93 0.02 240;
     --primary: 0.72 0.19 195;
-    --primary-foreground: 0.10 0.025 265;
-    --secondary: 0.20 0.04 265;
+    --primary-foreground: 0.1 0.025 265;
+    --secondary: 0.2 0.04 265;
     --secondary-foreground: 0.93 0.02 240;
     --muted: 0.18 0.03 265;
-    --muted-foreground: 0.60 0.04 255;
+    --muted-foreground: 0.6 0.04 255;
     --accent: 0.65 0.22 290;
-    --accent-foreground: 0.10 0.025 265;
+    --accent-foreground: 0.1 0.025 265;
     --destructive: 0.65 0.22 20;
     --destructive-foreground: 0.97 0 0;
     --border: 0.28 0.05 265;
@@ -47,15 +47,15 @@
     --chart-1: 0.72 0.19 195;
     --chart-2: 0.65 0.22 290;
     --chart-3: 0.75 0.18 165;
-    --chart-4: 0.80 0.20 230;
-    --chart-5: 0.70 0.24 320;
+    --chart-4: 0.8 0.2 230;
+    --chart-5: 0.7 0.24 320;
 
     /* Sidebar */
     --sidebar: 0.12 0.03 265;
     --sidebar-foreground: 0.93 0.02 240;
     --sidebar-primary: 0.72 0.19 195;
-    --sidebar-primary-foreground: 0.10 0.025 265;
-    --sidebar-accent: 0.20 0.04 265;
+    --sidebar-primary-foreground: 0.1 0.025 265;
+    --sidebar-accent: 0.2 0.04 265;
     --sidebar-accent-foreground: 0.93 0.02 240;
     --sidebar-border: 0.28 0.05 265;
     --sidebar-ring: 0.72 0.19 195;
@@ -63,7 +63,7 @@
     /* Custom healing frequency tokens */
     --glow-teal: 0.72 0.19 195;
     --glow-violet: 0.65 0.22 290;
-    --glow-cyan: 0.80 0.20 205;
+    --glow-cyan: 0.8 0.2 205;
     --surface-glass: 0.16 0.035 265;
   }
 
@@ -89,27 +89,25 @@
   }
 
   .glow-teal {
-    box-shadow:
-      0 0 20px oklch(var(--glow-teal) / 0.3),
-      0 0 60px oklch(var(--glow-teal) / 0.15),
-      inset 0 0 30px oklch(var(--glow-teal) / 0.05);
+    box-shadow: 0 0 20px oklch(var(--glow-teal) / 0.3), 0 0 60px
+      oklch(var(--glow-teal) / 0.15), inset 0 0 30px
+      oklch(var(--glow-teal) / 0.05);
   }
 
   .glow-violet {
-    box-shadow:
-      0 0 20px oklch(var(--glow-violet) / 0.3),
-      0 0 60px oklch(var(--glow-violet) / 0.15);
+    box-shadow: 0 0 20px oklch(var(--glow-violet) / 0.3), 0 0 60px
+      oklch(var(--glow-violet) / 0.15);
   }
 
   .text-glow {
-    text-shadow:
-      0 0 20px oklch(var(--glow-teal) / 0.6),
-      0 0 40px oklch(var(--glow-teal) / 0.3);
+    text-shadow: 0 0 20px oklch(var(--glow-teal) / 0.6), 0 0 40px
+      oklch(var(--glow-teal) / 0.3);
   }
 }
 
 @keyframes orb-pulse {
-  0%, 100% {
+  0%,
+  100% {
     transform: scale(1);
     opacity: 1;
   }
@@ -131,7 +129,8 @@
 }
 
 @keyframes frequency-shimmer {
-  0%, 100% {
+  0%,
+  100% {
     opacity: 0.7;
     transform: scaleX(1);
   }
@@ -153,13 +152,19 @@
 }
 
 @keyframes float {
-  0%, 100% { transform: translateY(0px); }
-  50% { transform: translateY(-8px); }
+  0%,
+  100% {
+    transform: translateY(0px);
+  }
+  50% {
+    transform: translateY(-8px);
+  }
 }
 
 /* Breath hold pulse — gentle opacity/glow oscillation during hold phases */
 @keyframes breath-hold-pulse {
-  0%, 100% {
+  0%,
+  100% {
     opacity: 0.55;
     box-shadow: 0 0 12px currentColor, 0 0 24px currentColor;
   }
@@ -190,14 +195,30 @@
 }
 
 /* Staggered fade-up for mood cards */
-.mood-card-1 { animation-delay: 0ms; }
-.mood-card-2 { animation-delay: 60ms; }
-.mood-card-3 { animation-delay: 120ms; }
-.mood-card-4 { animation-delay: 180ms; }
-.mood-card-5 { animation-delay: 240ms; }
-.mood-card-6 { animation-delay: 300ms; }
-.mood-card-7 { animation-delay: 360ms; }
-.mood-card-8 { animation-delay: 420ms; }
+.mood-card-1 {
+  animation-delay: 0ms;
+}
+.mood-card-2 {
+  animation-delay: 60ms;
+}
+.mood-card-3 {
+  animation-delay: 120ms;
+}
+.mood-card-4 {
+  animation-delay: 180ms;
+}
+.mood-card-5 {
+  animation-delay: 240ms;
+}
+.mood-card-6 {
+  animation-delay: 300ms;
+}
+.mood-card-7 {
+  animation-delay: 360ms;
+}
+.mood-card-8 {
+  animation-delay: 420ms;
+}
 
 /* Noise texture overlay */
 .noise-overlay::before {
